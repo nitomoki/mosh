@@ -92,7 +92,11 @@ Command to run on remote host. By default, \fBmosh\fP executes a login shell.
 
 .TP
 .B \-\-client=\fIPATH\fP
-path to client helper on local machine (default: "mosh-client")
+path to client helper on local machine (default: the
+.B mosh-client
+in the same directory as
+.BR mosh ,
+or else the one found in PATH)
 
 .TP
 .B \-\-server=\fICOMMAND\fP

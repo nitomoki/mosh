@@ -39,6 +39,7 @@ use IO::Socket;
 use Text::ParseWords;
 use Socket qw(IPPROTO_TCP);
 use Errno qw(EINTR);
+use FindBin;
 use POSIX qw(_exit);
 
 BEGIN {
@@ -61,7 +62,13 @@ my $have_ipv6 = eval {
 
 $|=1;
 
+# Prefer the mosh-client installed next to this script, so that mosh and
+# mosh-client from the same installation are used together even when
+# another installation's mosh-client comes earlier in PATH.
 my $client = 'mosh-client';
+if ( -f "$FindBin::RealBin/mosh-client" && -x _ ) {
+  $client = "$FindBin::RealBin/mosh-client";
+}
 my $server = 'mosh-server';
 
 my $predict = undef;
@@ -91,7 +98,8 @@ my @cmdline = @ARGV;
 my $usage =
 qq{Usage: $0 [options] [--] [user@]host [command...]
         --client=PATH        mosh client on local machine
-                                (default: "mosh-client")
+                                (default: "mosh-client" next to mosh,
+                                or in PATH)
         --server=COMMAND     mosh server on remote machine
                                 (default: "mosh-server")
 
