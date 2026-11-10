@@ -82,6 +82,7 @@
 
 #include "src/statesync/completeterminal.h"
 #include "src/statesync/user.h"
+#include "src/terminal/oscpolicy.h"
 #include "src/util/fatal_assert.h"
 #include "src/util/locale_utils.h"
 #include "src/util/pty_compat.h"
@@ -416,6 +417,19 @@ static int run_server( const char* desired_ip,
     } else if ( network_signaled_timeout < 0 ) {
       fputs( "MOSH_SERVER_SIGNAL_TMOUT is negative, ignoring\n", stderr );
       network_signaled_timeout = 0;
+    }
+  }
+  /* get OSC policy; the client reports problems with it, so invalid rules are skipped silently here */
+  const char* osc_policy_envar = getenv( "MOSH_OSC_POLICY" );
+  if ( osc_policy_envar ) {
+    std::string osc_policy_text;
+    if ( Terminal::OSCPolicy::decode_hex( osc_policy_envar, osc_policy_text ) ) {
+      std::vector<std::string> errors;
+      Terminal::OSCPolicy::set_active( Terminal::OSCPolicy::parse( osc_policy_text, errors ) );
+    }
+    if ( unsetenv( "MOSH_OSC_POLICY" ) < 0 ) {
+      perror( "unsetenv" );
+      exit( 1 );
     }
   }
   /* get initial window size */

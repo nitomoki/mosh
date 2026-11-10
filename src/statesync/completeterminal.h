@@ -63,7 +63,9 @@ private:
 public:
   Complete( size_t width, size_t height )
     : parser(), terminal( width, height ), display( false ), actions(), input_history(), echo_ack( 0 )
-  {}
+  {
+    display.set_osc_meta( true );
+  }
 
   std::string act( const std::string& str );
   std::string act( const Parser::Action& act );

@@ -30,22 +30,25 @@
     also delete it here.
 */
 
+#include <algorithm>
 #include <cassert>
 #include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 
+#include "src/terminal/oscpolicy.h"
 #include "src/terminal/parseraction.h"
 #include "src/terminal/terminalframebuffer.h"
 #include "terminaldispatcher.h"
 
 using namespace Terminal;
 
-static const size_t MAXIMUM_CLIPBOARD_SIZE = 16 * 1024;
+static const size_t MAXIMUM_CLIPBOARD_SIZE = OSCPolicy::MAX_OSC_LENGTH;
 
 Dispatcher::Dispatcher()
-  : params(), parsed_params(), parsed( false ), dispatch_chars(), OSC_string(), terminal_to_host()
+  : params(), parsed_params(), parsed( false ), dispatch_chars(), OSC_string(), OSC_overflow( false ),
+    diff_input( false ), OSC_meta_pending( false ), OSC_meta_index( 0 ), OSC_meta_count( 0 ), terminal_to_host()
 {}
 
 void Dispatcher::newparamchar( const Parser::Param* act )
@@ -242,12 +245,83 @@ void Dispatcher::OSC_put( const Parser::OSC_Put* act )
   assert( act->char_present );
   if ( OSC_string.size() < MAXIMUM_CLIPBOARD_SIZE ) {
     OSC_string.push_back( act->ch );
+  } else {
+    OSC_overflow = true;
   }
 }
 
 void Dispatcher::OSC_start( const Parser::OSC_Start* act __attribute( ( unused ) ) )
 {
   OSC_string.clear();
+  OSC_overflow = false;
+}
+
+/* Reads "META_NUMBER;INDEX;COUNT". Returns false if OSC_string is not one. */
+bool Dispatcher::parse_OSC_meta( void )
+{
+  static const std::wstring meta = std::to_wstring( OSCPolicy::META_NUMBER ) + L";";
+  if ( OSC_string.size() < meta.size() || !std::equal( meta.begin(), meta.end(), OSC_string.begin() ) ) {
+    return false;
+  }
+
+  OSC_meta_pending = false;
+  uint64_t fields[2] = { 0, 0 };
+  size_t field = 0;
+  bool has_digit = false;
+  for ( auto it = OSC_string.begin() + meta.size(); it != OSC_string.end(); it++ ) {
+    if ( *it == L';' && field == 0 && has_digit ) {
+      field = 1;
+      has_digit = false;
+    } else if ( *it >= L'0' && *it <= L'9' && fields[field] <= ( UINT64_MAX - 9 ) / 10 ) {
+      fields[field] = fields[field] * 10 + ( *it - L'0' );
+      has_digit = true;
+    } else {
+      return true;
+    }
+  }
+  if ( field == 1 && has_digit && fields[0] < OSCPolicy::active().size() ) {
+    OSC_meta_pending = true;
+    OSC_meta_index = fields[0];
+    OSC_meta_count = fields[1];
+  }
+  return true;
+}
+
+/* Returns true if the OSC policy took the OSC string. */
+bool Dispatcher::policy_dispatch( Framebuffer* fb )
+{
+  const OSCPolicy& policy = OSCPolicy::active();
+  if ( policy.empty() ) {
+    return false;
+  }
+
+  if ( diff_input ) {
+    if ( parse_OSC_meta() ) {
+      return true;
+    }
+    if ( !OSC_meta_pending ) {
+      return false;
+    }
+    OSC_meta_pending = false;
+    if ( OSCPolicy::is_native( OSC_string ) ) {
+      return false;
+    }
+    fb->set_osc( OSC_meta_index, OSC_string, OSC_meta_count );
+    return true;
+  }
+
+  if ( OSCPolicy::is_native( OSC_string ) ) {
+    return false;
+  }
+  const int index = policy.match( OSC_string );
+  if ( index < 0 ) {
+    return false;
+  }
+  const OSCPolicy::Rule& rule = policy.rule( index );
+  if ( rule.mode != OSCPolicy::Mode::Drop && !OSC_overflow && OSC_string.size() <= rule.max_length ) {
+    fb->record_osc( index, OSC_string );
+  }
+  return true;
 }
 
 bool Dispatcher::operator==( const Dispatcher& x ) const

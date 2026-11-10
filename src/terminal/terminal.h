@@ -81,6 +81,8 @@ public:
 
   const Framebuffer& get_fb( void ) const { return fb; }
 
+  void set_diff_input( bool x ) { dispatch.set_diff_input( x ); }
+
   bool operator==( Emulator const& x ) const;
 };
 }

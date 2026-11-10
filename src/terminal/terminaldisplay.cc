@@ -32,6 +32,7 @@
 
 #include <cstdio>
 
+#include "src/terminal/oscpolicy.h"
 #include "src/terminal/terminalframebuffer.h"
 #include "terminaldisplay.h"
 
@@ -108,6 +109,34 @@ std::string Display::new_frame( bool initialized, const Framebuffer& last, const
     const title_type& clipboard( f.get_clipboard() );
     for ( title_type::const_iterator i = clipboard.begin(); i != clipboard.end(); i++ ) {
       frame.append( *i );
+    }
+    frame.append( '\007' );
+  }
+
+  /* have OSC strings kept under the OSC policy changed? */
+  const OSCPolicy& osc_policy = OSCPolicy::active();
+  const Framebuffer::osc_slots_type& slots = f.get_osc_slots();
+  const Framebuffer::osc_slots_type& last_slots = frame.last_frame.get_osc_slots();
+  for ( size_t i = 0; i < slots.size() && i < osc_policy.size(); i++ ) {
+    const OSCSlot& slot = slots[i];
+    const OSCPolicy::Mode mode = osc_policy.rule( i ).mode;
+    if ( slot.text.empty() || mode == OSCPolicy::Mode::Drop ) {
+      continue;
+    }
+    static const OSCSlot unset;
+    const OSCSlot& last_slot = i < last_slots.size() ? last_slots[i] : unset;
+    const bool changed
+      = ( mode == OSCPolicy::Mode::Always ) ? ( slot.count != last_slot.count ) : ( slot.text != last_slot.text );
+    if ( !changed ) {
+      continue;
+    }
+    if ( osc_meta ) {
+      snprintf( tmp, 64, "\033]%d;%zu;%llu\007", OSCPolicy::META_NUMBER, i, (unsigned long long)slot.count );
+      frame.append( tmp );
+    }
+    frame.append( "\033]" );
+    for ( wchar_t c : slot.text ) {
+      frame.append( c );
     }
     frame.append( '\007' );
   }

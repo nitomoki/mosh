@@ -76,6 +76,8 @@ private:
 
   const char *smcup, *rmcup; /* enter and exit alternate screen mode */
 
+  bool osc_meta; /* announce the OSC policy rule and count before each kept OSC string */
+
   bool put_row( bool initialized,
                 FrameState& frame,
                 const Framebuffer& f,
@@ -90,6 +92,9 @@ public:
   std::string close() const;
 
   std::string new_frame( bool initialized, const Framebuffer& last, const Framebuffer& f ) const;
+
+  /* Set for frames that are diffs for another Complete rather than output for a real terminal. */
+  void set_osc_meta( bool x ) { osc_meta = x; }
 
   Display( bool use_environment );
 };

@@ -33,11 +33,15 @@
 #include "src/include/config.h"
 #include "src/include/version.h"
 
+#include <cstdio>
 #include <cstdlib>
+#include <string>
+#include <vector>
 
 #include <unistd.h>
 
 #include "src/crypto/crypto.h"
+#include "src/terminal/oscpolicy.h"
 #include "src/util/fatal_assert.h"
 #include "src/util/locale_utils.h"
 #include "stmclient.h"
@@ -183,6 +187,25 @@ int main( int argc, char* argv[] )
   if ( unsetenv( "MOSH_KEY" ) < 0 ) {
     perror( "unsetenv" );
     exit( 1 );
+  }
+
+  /* Read OSC policy */
+  const char* osc_policy_envar = getenv( "MOSH_OSC_POLICY" );
+  if ( osc_policy_envar ) {
+    std::string osc_policy_text;
+    if ( Terminal::OSCPolicy::decode_hex( osc_policy_envar, osc_policy_text ) ) {
+      std::vector<std::string> errors;
+      Terminal::OSCPolicy::set_active( Terminal::OSCPolicy::parse( osc_policy_text, errors ) );
+      for ( const std::string& error : errors ) {
+        fprintf( stderr, "%s: OSC policy: %s\n", argv[0], error.c_str() );
+      }
+    } else {
+      fprintf( stderr, "%s: MOSH_OSC_POLICY is not valid hex, ignoring\n", argv[0] );
+    }
+    if ( unsetenv( "MOSH_OSC_POLICY" ) < 0 ) {
+      perror( "unsetenv" );
+      exit( 1 );
+    }
   }
 
   /* Adopt native locale */

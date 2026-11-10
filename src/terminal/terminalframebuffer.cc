@@ -73,7 +73,7 @@ DrawState::DrawState( int s_width, int s_height )
 }
 
 Framebuffer::Framebuffer( int s_width, int s_height )
-  : rows(), icon_name(), window_title(), clipboard(), bell_count( 0 ), title_initialized( false ),
+  : rows(), icon_name(), window_title(), clipboard(), bell_count( 0 ), title_initialized( false ), osc_slots(),
     ds( s_width, s_height )
 {
   assert( s_height > 0 );
@@ -86,7 +86,7 @@ Framebuffer::Framebuffer( int s_width, int s_height )
 Framebuffer::Framebuffer( const Framebuffer& other )
   : rows( other.rows ), icon_name( other.icon_name ), window_title( other.window_title ),
     clipboard( other.clipboard ), bell_count( other.bell_count ), title_initialized( other.title_initialized ),
-    ds( other.ds )
+    osc_slots( other.osc_slots ), ds( other.ds )
 {}
 
 Framebuffer& Framebuffer::operator=( const Framebuffer& other )
@@ -98,9 +98,28 @@ Framebuffer& Framebuffer::operator=( const Framebuffer& other )
     clipboard = other.clipboard;
     bell_count = other.bell_count;
     title_initialized = other.title_initialized;
+    osc_slots = other.osc_slots;
     ds = other.ds;
   }
   return *this;
+}
+
+void Framebuffer::record_osc( size_t index, const title_type& text )
+{
+  if ( osc_slots.size() <= index ) {
+    osc_slots.resize( index + 1 );
+  }
+  osc_slots[index].text = text;
+  osc_slots[index].count++;
+}
+
+void Framebuffer::set_osc( size_t index, const title_type& text, uint64_t count )
+{
+  if ( osc_slots.size() <= index ) {
+    osc_slots.resize( index + 1 );
+  }
+  osc_slots[index].text = text;
+  osc_slots[index].count = count;
 }
 
 void Framebuffer::scroll( int N )

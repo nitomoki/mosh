@@ -105,7 +105,9 @@ void Complete::apply_string( const string& diff )
 
   for ( int i = 0; i < input.instruction_size(); i++ ) {
     if ( input.instruction( i ).HasExtension( hostbytes ) ) {
+      terminal.set_diff_input( true );
       string terminal_to_host = act( input.instruction( i ).GetExtension( hostbytes ).hoststring() );
+      terminal.set_diff_input( false );
       assert( terminal_to_host.empty() ); /* server never interrogates client terminal */
     } else if ( input.instruction( i ).HasExtension( resize ) ) {
       act( Resize( input.instruction( i ).GetExtension( resize ).width(),

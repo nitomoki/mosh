@@ -290,6 +290,75 @@ The escape sequence to shut down the connection is
 \fBEsc .\fP. The sequence \fBEsc Ctrl-Z\fP suspends the client.
 Any other sequence passes both characters through to the server.
 
+.SH OSC POLICY
+
+\fBmosh\fP handles a fixed set of OSC (Operating System Command)
+sequences itself: the window title and icon name (OSC 0, 1 and 2),
+hyperlinks (OSC 8), and the clipboard with the \fBc\fP selection
+(OSC 52).  Other OSC sequences written by programs on the server are
+discarded unless an OSC policy file allows them.
+
+The policy file is
+.BR $MOSH_OSC_CONFIG ,
+or
+.B $XDG_CONFIG_HOME/mosh/osc.conf
+if that variable is not set
+.RB ( ~/.config/mosh/osc.conf
+by default).
+\fBmosh\fP reads it and passes it to both \fBmosh-client\fP and
+\fBmosh-server\fP.  Each line holds one rule:
+
+.nf
+    NUMBER PREFIX MODE [MAXLEN]
+.fi
+
+.TP
+.B NUMBER
+The OSC number.  OSC 0, 1, 2 and 8 are handled natively and cannot be
+configured, and OSC 5379 is reserved.  Rules for OSC 52 apply only to
+selections other than \fBc\fP.
+
+.TP
+.B PREFIX
+Text that must follow "\fINUMBER\fP;" for the rule to match, or
+\fB*\fP to match any text.
+
+.TP
+.B MODE
+\fBdrop\fP discards the sequence.  \fBlatest\fP forwards it when its
+text differs from the last one forwarded under the same rule.
+\fBalways\fP forwards every occurrence, including repeats of the same
+text.
+
+.TP
+.B MAXLEN
+The longest OSC string, in characters and including the number, that
+the rule forwards; longer ones are discarded.  The default is 1024
+and the maximum is 16384.
+
+.PP
+The first matching rule applies, and sequences that match no rule are
+discarded.  Blank lines and lines starting with \fB#\fP are ignored,
+and invalid lines are reported by \fBmosh-client\fP and skipped.  Each
+rule keeps only its most recent sequence, so when several arrive
+between two screen updates, only the last is forwarded.  Forwarded
+sequences are terminated with BEL.
+
+For example, to forward the user variable STATUS every time it is set,
+and the working directory whenever it changes:
+
+.nf
+    1337 SetUserVar=STATUS= always 256
+    7 * latest 4096
+.fi
+
+The policy reaches the server in the environment variable
+.BR MOSH_OSC_POLICY .
+A \fBmosh-server\fP without OSC policy support ignores it and the
+session works as if there were no policy, except that the variable
+remains visible to programs in the session.  A \fBmosh-client\fP
+without OSC policy support ignores the forwarded sequences.
+
 .SH ENVIRONMENT VARIABLES
 These variables are not actually interpreted by
 .BR mosh (1)
@@ -313,6 +382,12 @@ overrides this variable.
 .TP
 .B MOSH_TITLE_NOPREFIX
 When set, inhibits prepending "[mosh]" to window title.
+
+.TP
+.B MOSH_OSC_CONFIG
+Unlike the variables above, this one is read by \fBmosh\fP itself.
+It is the path of the OSC policy file described in OSC POLICY above.
+When set to the empty string, no policy is used.
 
 .SH SEE ALSO
 .BR mosh-client (1),

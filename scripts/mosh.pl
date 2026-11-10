@@ -329,6 +329,11 @@ if ( (not defined $colors)
 
 $ENV{ 'MOSH_CLIENT_PID' } = $$; # We don't support this, but it's useful for test and debug.
 
+my $osc_policy = osc_policy();
+# An environment variable rather than an option, so that servers without OSC
+# policy support ignore it instead of refusing to start.
+my $server_env = defined $osc_policy ? "env MOSH_OSC_POLICY=$osc_policy " : '';
+
 # If we are using a locally-resolved address, we have to get it before we fork,
 # so both parent and child get it.
 my $ip;
@@ -396,7 +401,7 @@ if ( $pid == 0 ) { # child
     delete $ENV{ 'SSH_CONNECTION' };
     chdir; # $HOME
     print "MOSH IP ${userhost}\n";
-    exec( "$server " . shell_quote( @server ) );
+    exec( $server_env . "$server " . shell_quote( @server ) );
     die "Cannot exec $server: $!\n";
   }
   if ( $use_remote_ip eq 'proxy' ) {
@@ -406,7 +411,7 @@ if ( $pid == 0 ) { # child
     my $quoted_proxy_command = shell_quote( $0, "--family=$family" );
     push @sshopts, ( '-S', 'none', '-o', "ProxyCommand=$quoted_proxy_command --fake-proxy -- %h %p" );
   }
-  my @exec_argv = ( @ssh, @sshopts, $userhost, '--', $ssh_connection . "$server " . shell_quote( @server ) );
+  my @exec_argv = ( @ssh, @sshopts, $userhost, '--', $ssh_connection . $server_env . "$server " . shell_quote( @server ) );
   exec @exec_argv;
   die "Cannot exec ssh: $!\n";
 } else { # parent
@@ -462,10 +467,38 @@ if ( $pid == 0 ) { # child
   $ENV{ 'MOSH_KEY' } = $key;
   $ENV{ 'MOSH_PREDICTION_DISPLAY' } = $predict;
   $ENV{ 'MOSH_NO_TERM_INIT' } = '1' if !$term_init;
+  $ENV{ 'MOSH_OSC_POLICY' } = $osc_policy if defined $osc_policy;
   exec {$client} ("$client", "-# @cmdline |", $ip, $port);
 }
 
 sub shell_quote { join ' ', map {(my $a = $_) =~ s/'/'\\''/g; "'$a'"} @_ }
+
+# Returns the OSC policy file as hex, or undef if there is none.
+sub osc_policy {
+  my $path = $ENV{ 'MOSH_OSC_CONFIG' };
+  if ( !defined $path ) {
+    my $config_home = $ENV{ 'XDG_CONFIG_HOME' };
+    if ( !defined $config_home or $config_home eq '' ) {
+      return undef if !defined $ENV{ 'HOME' };
+      $config_home = "$ENV{ 'HOME' }/.config";
+    }
+    $path = "$config_home/mosh/osc.conf";
+  }
+  return undef if $path eq '' or !-e $path;
+
+  my $fh;
+  if ( !open( $fh, '<', $path ) ) {
+    warn "$0: Cannot read OSC policy $path: $!\n";
+    return undef;
+  }
+  my $text = do { local $/; <$fh> };
+  close $fh;
+  if ( length $text > 16384 ) {
+    warn "$0: OSC policy $path is larger than 16384 bytes, ignoring\n";
+    return undef;
+  }
+  return unpack( 'H*', $text );
+}
 
 sub locale_vars {
   my @names = qw[LANG LANGUAGE LC_CTYPE LC_NUMERIC LC_TIME LC_COLLATE LC_MONETARY LC_MESSAGES LC_PAPER LC_NAME LC_ADDRESS LC_TELEPHONE LC_MEASUREMENT LC_IDENTIFICATION LC_ALL];

@@ -121,6 +121,14 @@ $ pkill -SIGUSR1 mosh-server
 to kill disconnected sessions without killing connected login
 sessions.
 
+.TP
+.B MOSH_OSC_POLICY
+The OSC policy, as the text of a policy file encoded in hexadecimal.
+\fBmosh\fP sets it from the policy file described in
+.BR mosh (1).
+\fBmosh-server\fP removes it from the environment before starting the
+session.
+
 .SH EXAMPLE
 
 .nf

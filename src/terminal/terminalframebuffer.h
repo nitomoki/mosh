@@ -393,6 +393,18 @@ public:
   }
 };
 
+/* The latest OSC string kept under one OSC policy rule, and how many times
+   such a string has been seen. */
+struct OSCSlot
+{
+  std::vector<wchar_t> text;
+  uint64_t count;
+
+  OSCSlot() : text(), count( 0 ) {}
+
+  bool operator==( const OSCSlot& x ) const { return ( text == x.text ) && ( count == x.count ); }
+};
+
 class Framebuffer
 {
   // To minimize copying of rows and cells, we use shared_ptr to
@@ -410,7 +422,8 @@ class Framebuffer
 public:
   typedef std::vector<wchar_t> title_type;
   typedef std::shared_ptr<Row> row_pointer;
-  typedef std::vector<row_pointer> rows_type; /* can be either std::vector or std::deque */
+  typedef std::vector<row_pointer> rows_type;  /* can be either std::vector or std::deque */
+  typedef std::vector<OSCSlot> osc_slots_type; /* indexed by OSC policy rule */
 
 private:
   rows_type rows;
@@ -419,6 +432,7 @@ private:
   title_type clipboard;
   unsigned int bell_count;
   bool title_initialized; /* true if the window title has been set via an OSC */
+  osc_slots_type osc_slots;
 
   row_pointer newrow( void )
   {
@@ -512,10 +526,18 @@ public:
   void ring_bell( void ) { bell_count++; }
   unsigned int get_bell_count( void ) const { return bell_count; }
 
+  /* Keeps an OSC string seen in application output and counts it. */
+  void record_osc( size_t index, const title_type& text );
+  /* Keeps an OSC string received in a diff, with the sender's count. Counting
+     arrivals instead would miss repeats: a diff may be built from an older
+     state than the one last shown, and then carries only the latest string. */
+  void set_osc( size_t index, const title_type& text, uint64_t count );
+  const osc_slots_type& get_osc_slots( void ) const { return osc_slots; }
+
   bool operator==( const Framebuffer& x ) const
   {
     return ( rows == x.rows ) && ( window_title == x.window_title ) && ( clipboard == x.clipboard )
-           && ( bell_count == x.bell_count ) && ( ds == x.ds );
+           && ( bell_count == x.bell_count ) && ( osc_slots == x.osc_slots ) && ( ds == x.ds );
   }
 };
 }
