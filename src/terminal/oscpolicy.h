@@ -69,6 +69,8 @@ public:
     std::wstring prefix; /* empty matches anything */
     Mode mode;
     size_t max_length;
+
+    Rule() : number(), prefix(), mode( Mode::Drop ), max_length( 0 ) {}
   };
 
   static constexpr size_t MAX_RULES = 32;
