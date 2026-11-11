@@ -1,0 +1,226 @@
+name: binaries
+
+# Pushing an annotated fork-* tag publishes a release.  git describe only
+# considers annotated tags, and its output is the build version that
+# `mosh --version` reports.
+on:
+  push:
+    tags:
+      - "fork-*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    # glibc runs binaries linked against older versions, so build on the
+    # oldest one to support and link every other library statically.
+    container:
+      image: ubuntu:22.04
+      # mosh-server detaches from the tests that start it.  Without an init
+      # process to reap it, it stays a zombie after exiting, and the tests
+      # that wait for it to exit fail.
+      options: --init
+    env:
+      LANG: C.UTF-8
+    steps:
+      # tmux and less are used by the end-to-end tests.
+      - name: Install build dependencies
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            git ca-certificates build-essential autoconf automake pkg-config perl tmux less \
+            protobuf-compiler libprotobuf-dev libutempter-dev libssl-dev zlib1g-dev libncurses-dev
+
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      # The workspace belongs to the runner's user, not to root in the
+      # container, so git refuses to run there.  The build version would then
+      # silently lose its git describe part.
+      - name: Trust the workspace
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Check that the build version is the tag
+        if: startsWith(github.ref, 'refs/tags/')
+        run: test "$(git describe --dirty --always)" = "$GITHUB_REF_NAME"
+
+      - name: Build
+        run: |
+          ./autogen.sh
+          ./configure --enable-static-libraries
+          make -j"$(nproc)"
+
+      - name: Test
+        run: make -j"$(nproc)" check || { cat src/tests/test-suite.log; exit 1; }
+
+      - name: Package
+        run: |
+          version=$(git describe --dirty --always)
+          name=mosh-${version#mosh-}-linux-x86_64
+          make install-strip DESTDIR="$PWD/stage"
+          mv stage/usr/local "$name"
+          ldd "$name"/bin/mosh-client "$name"/bin/mosh-server
+          extra=$(ldd "$name"/bin/mosh-client "$name"/bin/mosh-server |
+            awk '/=>/ && $1 != "libc.so.6" && $1 != "libm.so.6" {print $1}')
+          if [ -n "$extra" ]; then
+            echo "linked dynamically: $extra"
+            exit 1
+          fi
+          "$name"/bin/mosh-client --version
+          tar -czf "$name.tar.gz" --owner=0 --group=0 --numeric-owner "$name"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: linux-x86_64
+          path: mosh-*-linux-x86_64.tar.gz
+          if-no-files-found: error
+
+  linux-smoke:
+    needs: linux
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        image: ["ubuntu:24.04", "debian:12"]
+    container: ${{ matrix.image }}
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: linux-x86_64
+      - name: Run the binaries
+        run: |
+          tar -xzf mosh-*-linux-x86_64.tar.gz --strip-components=1 -C /usr/local
+          mosh-client --version
+          mosh-server --version
+
+  macos:
+    runs-on: macos-latest
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "13.0"
+      PROTOBUF_VERSION: "21.12"
+      PROTOBUF_SHA256: 4eab9b524aa5913c6fffb20b2a8abf5ef7f95a80bc0701f3a6dbb4c607f73460
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Check that the build version is the tag
+        if: startsWith(github.ref, 'refs/tags/')
+        run: test "$(git describe --dirty --always)" = "$GITHUB_REF_NAME"
+
+      # tmux is used by the end-to-end tests, which are skipped without it.
+      - name: Install build tools
+        run: brew install autoconf automake pkgconf tmux
+
+      # protobuf 22 and later depend on Abseil, which would also have to be
+      # linked statically; 21.x is the last release without it.
+      - name: Restore protobuf
+        id: protobuf-cache
+        uses: actions/cache@v6
+        with:
+          path: ~/protobuf
+          key: protobuf-${{ env.PROTOBUF_VERSION }}-${{ runner.os }}-${{ runner.arch }}-${{ env.MACOSX_DEPLOYMENT_TARGET }}
+
+      - name: Build protobuf
+        if: steps.protobuf-cache.outputs.cache-hit != 'true'
+        working-directory: ${{ runner.temp }}
+        run: |
+          tarball=protobuf-cpp-3.$PROTOBUF_VERSION.tar.gz
+          curl -fsSLO "https://github.com/protocolbuffers/protobuf/releases/download/v$PROTOBUF_VERSION/$tarball"
+          echo "$PROTOBUF_SHA256  $tarball" | shasum -a 256 -c
+          tar -xzf "$tarball"
+          cmake -S "protobuf-3.$PROTOBUF_VERSION" -B protobuf-build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX="$HOME/protobuf" \
+            -DCMAKE_CXX_STANDARD=17 \
+            -Dprotobuf_BUILD_TESTS=OFF \
+            -Dprotobuf_BUILD_SHARED_LIBS=OFF \
+            -Dprotobuf_WITH_ZLIB=OFF
+          cmake --build protobuf-build -j"$(sysctl -n hw.ncpu)"
+          cmake --install protobuf-build
+
+      - name: Build
+        run: |
+          export PATH="$HOME/protobuf/bin:$PATH"
+          ./autogen.sh
+          ./configure \
+            protobuf_CFLAGS="-I$HOME/protobuf/include" \
+            protobuf_LIBS="$HOME/protobuf/lib/libprotobuf.a"
+          make -j"$(sysctl -n hw.ncpu)"
+
+      # The end-to-end tests fail when the server polls with a zero timeout
+      # too often, which it does on macOS.  They skip that check when
+      # TRAVIS_OS_NAME is osx.
+      - name: Test
+        env:
+          TRAVIS_OS_NAME: osx
+        run: make -j"$(sysctl -n hw.ncpu)" check || { cat src/tests/test-suite.log; exit 1; }
+
+      - name: Package
+        run: |
+          version=$(git describe --dirty --always)
+          name=mosh-${version#mosh-}-macos-$(uname -m)
+          # The macOS linker leaves debug information in the object files, so
+          # there is little to strip.
+          make install DESTDIR="$PWD/stage"
+          mv stage/usr/local "$name"
+          otool -L "$name"/bin/mosh-client "$name"/bin/mosh-server
+          extra=$(otool -L "$name"/bin/mosh-client "$name"/bin/mosh-server |
+            awk '$1 !~ /:$/ && $1 !~ /^\/(usr\/lib|System\/Library)\// {print $1}')
+          if [ -n "$extra" ]; then
+            echo "linked outside the system: $extra"
+            exit 1
+          fi
+          otool -l "$name"/bin/mosh-client | awk '/LC_BUILD_VERSION/ {f = 1} f && /minos/ {print; exit}'
+          "$name"/bin/mosh-client --version
+          # Without COPYFILE_DISABLE, macOS tar adds ._* files for extended attributes.
+          COPYFILE_DISABLE=1 tar -czf "$name.tar.gz" --uid=0 --gid=0 "$name"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: macos
+          path: mosh-*-macos-*.tar.gz
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [linux-smoke, macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd dist
+          sha256sum -- *.tar.gz > SHA256SUMS
+          cat > "$RUNNER_TEMP/notes.md" <<'EOF'
+          Prebuilt `mosh`, `mosh-client` and `mosh-server`.
+
+          - `linux-x86_64`: x86_64 Linux with glibc 2.35 or later (for example Ubuntu 22.04 or later)
+          - `macos-arm64`: macOS 13 or later on Apple silicon
+
+          Extract into any prefix, for example `~/.local`:
+
+              tar -xzf mosh-*-<platform>.tar.gz --strip-components=1 -C ~/.local
+
+          `mosh` runs the `mosh-client` installed next to it.  On the server,
+          `mosh-server` has to be found in the PATH of a non-interactive ssh
+          session, or be given with `--server`.
+
+          macOS quarantines files downloaded with a web browser; download with
+          `curl` or `gh release download` instead, or clear the attribute with
+          `xattr -dr com.apple.quarantine` on the extracted directory.
+          EOF
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag \
+            --title "$GITHUB_REF_NAME" --notes-file "$RUNNER_TEMP/notes.md" \
+            *.tar.gz SHA256SUMS
